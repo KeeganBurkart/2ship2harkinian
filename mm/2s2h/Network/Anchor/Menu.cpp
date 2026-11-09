@@ -127,6 +127,12 @@ void Anchor_DrawMenu() {
         bool changed = false;
         changed |= CVarCheckbox("Share items and progress", CVAR_ANCHOR("RoomSettings.SyncItemsAndFlags"),
                                 CheckboxOptions().DefaultValue(true));
+        changed |= CVarCheckbox("Share enemy damage", CVAR_ANCHOR("RoomSettings.ShareEnemyDamage"),
+                                CheckboxOptions().DefaultValue(true).Tooltip(
+                                    "Damage dealt to an enemy in one game is dealt to the same enemy in the others."));
+        changed |= CVarCheckbox("Scale enemy health by players", CVAR_ANCHOR("RoomSettings.ScaleEnemyHealth"),
+                                CheckboxOptions().DefaultValue(true).Tooltip(
+                                    "Enemies get their health multiplied by the number of players in the scene."));
         static const std::vector<const char*> teleportModes = { "Off", "Team only", "Anyone" };
         changed |= CVarCombobox("Teleport", CVAR_ANCHOR("RoomSettings.TeleportMode"), teleportModes,
                                 ComboboxOptions().DefaultIndex(1));

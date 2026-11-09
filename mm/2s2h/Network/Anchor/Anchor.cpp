@@ -131,6 +131,8 @@ void Anchor::ProcessIncomingPacketQueue() {
         try {
             if (packetType == ALL_CLIENT_STATE)
                 HandlePacket_AllClientState(payload);
+            else if (packetType == ENEMY_HEALTH)
+                HandlePacket_EnemyHealth(payload);
             else if (packetType == DISABLE_ANCHOR)
                 Disable();
             else if (packetType == GIVE_ITEM)
@@ -224,6 +226,7 @@ void Anchor::RegisterHooks() {
     COND_HOOK(OnGameStateMainStart, enabled, []() {
         Anchor* anchor = Anchor::Instance;
         anchor->ProcessIncomingPacketQueue();
+        anchor->UpdateEnemyHealthScale();
 
         if (!anchor->isConnected) {
             return;
@@ -297,6 +300,8 @@ void Anchor::RegisterHooks() {
     });
 
     COND_HOOK(AfterEndOfCycleSave, enabled, []() { Anchor::Instance->SendPacket_UpdateTeamState(); });
+
+    RegisterEnemyHooks(enabled);
 }
 
 static void RegisterAnchor() {

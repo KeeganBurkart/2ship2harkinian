@@ -62,6 +62,8 @@ struct RoomState {
     uint32_t ownerClientId = 0;
     u8 teleportMode = 1;      // 0 = off, 1 = team, 2 = all
     u8 syncItemsAndFlags = 1; // 0 = off, 1 = on
+    u8 shareEnemyDamage = 1;
+    u8 scaleEnemyHealth = 1;
 };
 
 class Anchor : public Network {
@@ -82,6 +84,7 @@ class Anchor : public Network {
     void RefreshClientActors();
 
     void HandlePacket_AllClientState(nlohmann::json payload);
+    void HandlePacket_EnemyHealth(nlohmann::json payload);
     void HandlePacket_GiveItem(nlohmann::json payload);
     void HandlePacket_PlayerUpdate(nlohmann::json payload);
     void HandlePacket_RequestTeamState(nlohmann::json payload);
@@ -101,6 +104,7 @@ class Anchor : public Network {
     // Packet types //
     inline static const std::string ALL_CLIENT_STATE = "ALL_CLIENT_STATE";
     inline static const std::string DISABLE_ANCHOR = "DISABLE_ANCHOR";
+    inline static const std::string ENEMY_HEALTH = "ENEMY_HEALTH";
     inline static const std::string GIVE_ITEM = "GIVE_ITEM";
     inline static const std::string HANDSHAKE = "HANDSHAKE";
     inline static const std::string PLAYER_UPDATE = "PLAYER_UPDATE";
@@ -127,6 +131,10 @@ class Anchor : public Network {
     void SendJsonToRemote(nlohmann::json packet) override;
     void ProcessIncomingPacketQueue();
     void RegisterHooks();
+    void RegisterEnemyHooks(bool enabled);
+    void UpdateEnemyHealthScale();
+    uint8_t GetPlayersInScene();
+    uint8_t GetEnemyHealthScale();
     bool IsSaveLoaded();
     bool CanTeleportTo(uint32_t clientId);
     bool IsSyncing();
@@ -137,6 +145,7 @@ class Anchor : public Network {
     void SetPuppetClientId(const Actor* actor, uint32_t clientId);
     uint32_t TakeSpawningPuppetClientId();
 
+    void SendPacket_EnemyHealth(Actor* actor, uint8_t ordinal, uint32_t baseKey);
     void SendPacket_GiveItem(u8 itemId);
     void SendPacket_Handshake();
     void SendPacket_PlayerUpdate();

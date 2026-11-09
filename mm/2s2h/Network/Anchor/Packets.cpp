@@ -141,6 +141,8 @@ json Anchor::PrepRoomState() {
     payload["ownerClientId"] = ownClientId;
     payload["teleportMode"] = CVarGetInteger(CVAR_ANCHOR("RoomSettings.TeleportMode"), 1);
     payload["syncItemsAndFlags"] = CVarGetInteger(CVAR_ANCHOR("RoomSettings.SyncItemsAndFlags"), 1);
+    payload["shareEnemyDamage"] = CVarGetInteger(CVAR_ANCHOR("RoomSettings.ShareEnemyDamage"), 1);
+    payload["scaleEnemyHealth"] = CVarGetInteger(CVAR_ANCHOR("RoomSettings.ScaleEnemyHealth"), 1);
     return payload;
 }
 
@@ -160,6 +162,8 @@ void Anchor::HandlePacket_UpdateRoomState(json payload) {
     roomState.ownerClientId = state.value("ownerClientId", (uint32_t)0);
     roomState.teleportMode = state.value("teleportMode", (u8)1);
     roomState.syncItemsAndFlags = state.value("syncItemsAndFlags", (u8)1);
+    roomState.shareEnemyDamage = state.value("shareEnemyDamage", (u8)1);
+    roomState.scaleEnemyHealth = state.value("scaleEnemyHealth", (u8)1);
 }
 
 void Anchor::HandlePacket_ServerMessage(json payload) {
