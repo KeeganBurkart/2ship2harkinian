@@ -39,30 +39,68 @@ static uint32_t HashCombine(uint32_t hash, int32_t value) {
 }
 
 static bool IsSyncedEnemy(Actor* actor) {
+    // The shooting gallery Wolfos is a reused target that only ever expects its own two health
+    if (actor->id == ACTOR_EN_SYATEKI_WF) {
+        return false;
+    }
     return actor->category == ACTORCAT_ENEMY || actor->category == ACTORCAT_BOSS;
 }
 
-// Enemies whose own death code sets flags or plays a cutscene, so a remote kill must leave them for a local hit
+/**
+ * A remote kill removes the enemy without running its death code. That is wrong for enemies whose death sets a flag,
+ * plays a cutscene, spawns something needed, or that other actors keep pointing at, and for any enemy currently
+ * holding the player. Those are left at 1 health for a local hit to finish.
+ */
 static bool CanKillRemotely(Actor* actor) {
     if (actor->category == ACTORCAT_BOSS) {
         return false;
     }
 
+    Player* player = GET_PLAYER(gPlayState);
+    if (player->actor.parent == actor || (player->csActor == actor && player->csAction != PLAYER_CSACTION_NONE) ||
+        (player->stateFlags2 & PLAYER_STATE2_80)) {
+        return false;
+    }
+    if (actor->csId != CS_ID_NONE && CutsceneManager_GetCurrentCsId() == actor->csId) {
+        return false;
+    }
+
     switch (actor->id) {
+        // Flags, cutscenes or rewards on death
+        case ACTOR_EN_BIGPO:
         case ACTOR_EN_BSB:
         case ACTOR_EN_DEATH:
         case ACTOR_EN_DINOFOS:
         case ACTOR_EN_DRAGON:
         case ACTOR_EN_EGOL:
-        case ACTOR_EN_HINT_SKB:
         case ACTOR_EN_IK:
         case ACTOR_EN_JSO2:
         case ACTOR_EN_KAIZOKU:
-        case ACTOR_EN_PP:
+        case ACTOR_EN_RD:
         case ACTOR_EN_TALK_GIBUD:
         case ACTOR_EN_THIEFBIRD:
         case ACTOR_EN_WIZ:
+        // Leaves something behind that the area needs
+        case ACTOR_BOSS_05:
+        case ACTOR_EN_DEKUNUTS:
+        case ACTOR_EN_RAIL_SKB:
+        case ACTOR_EN_RR:
+        // Linked to other actors that don't check whether it is still alive
+        case ACTOR_BOSS_07:
+        case ACTOR_EN_FLOORMAS:
+        case ACTOR_EN_PO_SISTERS:
+        case ACTOR_EN_PR:
+        case ACTOR_EN_SNOWMAN:
             return false;
+        // The Graveyard's bats open the way on the second night
+        case ACTOR_EN_BAT:
+            return actor->room != -1;
+        // Skulltulas that set a switch flag
+        case ACTOR_EN_ST:
+            return (actor->params & 0x3F) == 0x3F;
+        // Gold Skulltulas drop their token
+        case ACTOR_EN_SW:
+            return (actor->params & 3) == 0;
         default:
             return true;
     }
@@ -214,30 +252,46 @@ void Anchor::HandlePacket_EnemyHealth(json payload) {
     Actor_SetColorFilter(actor, COLORFILTER_COLORFLAG_RED, 255, COLORFILTER_BUFFLAG_OPA, 8);
 }
 
+static void TrackEnemy(Actor* actor) {
+    uint32_t baseKey = GetBaseKey(actor);
+    uint8_t ordinal = 0;
+    ForEachSyncedEnemy([&](Actor* other, EnemySyncData* otherData) {
+        if (other != actor && otherData->baseKey == baseKey) {
+            ordinal = std::max<uint8_t>(ordinal, otherData->ordinal + 1);
+        }
+    });
+
+    uint8_t scale = Anchor::Instance->GetEnemyHealthScale();
+    actor->colChkInfo.health = ScaleHealth(actor->colChkInfo.health, 1, scale);
+
+    ObjectExtension::GetInstance().Set<EnemySyncData>(actor, EnemySyncData{
+                                                                 .baseKey = baseKey,
+                                                                 .ordinal = ordinal,
+                                                                 .lastHealth = actor->colChkInfo.health,
+                                                                 .scale = scale,
+                                                             });
+}
+
 void Anchor::RegisterEnemyHooks(bool enabled) {
     COND_HOOK(OnActorInit, enabled, [](Actor* actor) {
         if (!IsSyncedEnemy(actor) || actor->update == nullptr || !Anchor::Instance->IsSaveLoaded()) {
             return;
         }
-
-        uint32_t baseKey = GetBaseKey(actor);
-        uint8_t ordinal = 0;
-        ForEachSyncedEnemy([&](Actor* other, EnemySyncData* otherData) {
-            if (other != actor && otherData->baseKey == baseKey) {
-                ordinal = std::max<uint8_t>(ordinal, otherData->ordinal + 1);
-            }
-        });
-
-        uint8_t scale = Anchor::Instance->GetEnemyHealthScale();
-        actor->colChkInfo.health = ScaleHealth(actor->colChkInfo.health, 1, scale);
-
-        ObjectExtension::GetInstance().Set<EnemySyncData>(actor, EnemySyncData{
-                                                                     .baseKey = baseKey,
-                                                                     .ordinal = ordinal,
-                                                                     .lastHealth = actor->colChkInfo.health,
-                                                                     .scale = scale,
-                                                                 });
+        TrackEnemy(actor);
     });
+
+    // Connecting mid-scene: pick up the enemies that spawned before the hooks existed, in spawn order
+    if (enabled && IsSaveLoaded()) {
+        for (u8 category : { ACTORCAT_ENEMY, ACTORCAT_BOSS }) {
+            for (Actor* actor = gPlayState->actorCtx.actorLists[category].first; actor != nullptr;
+                 actor = actor->next) {
+                if (IsSyncedEnemy(actor) && actor->update != nullptr &&
+                    ObjectExtension::GetInstance().Get<EnemySyncData>(actor) == nullptr) {
+                    TrackEnemy(actor);
+                }
+            }
+        }
+    }
 
     COND_HOOK(OnActorUpdate, enabled, [](Actor* actor) {
         if (!IsSyncedEnemy(actor)) {
