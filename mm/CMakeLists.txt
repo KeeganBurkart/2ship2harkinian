@@ -650,6 +650,24 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE "${ADDITIONAL_LIBRARY_DEPENDENCIES}")
 endif()
 
+################################################################################
+# Anchor (online co-op) networking
+################################################################################
+if(CMAKE_SYSTEM_NAME MATCHES "Windows|Darwin|Linux")
+    find_package(SDL2_net CONFIG QUIET)
+    if(TARGET SDL2_net::SDL2_net-static)
+        set(ANCHOR_SDL2_NET_LIBRARY SDL2_net::SDL2_net-static)
+    elseif(TARGET SDL2_net::SDL2_net)
+        set(ANCHOR_SDL2_NET_LIBRARY SDL2_net::SDL2_net)
+    else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SDL2_NET REQUIRED IMPORTED_TARGET SDL2_net)
+        set(ANCHOR_SDL2_NET_LIBRARY PkgConfig::SDL2_NET)
+    endif()
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${ANCHOR_SDL2_NET_LIBRARY})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_ANCHOR)
+endif()
+
 if(CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch")
 
 nx_generate_nacp(2s2h.nacp
