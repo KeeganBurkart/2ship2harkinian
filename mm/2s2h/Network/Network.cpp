@@ -19,15 +19,13 @@ void Network::Enable(const char* host, uint16_t port) {
         sNetInitialized = true;
     }
 
-    if (SDLNet_ResolveHost(&networkAddress, host, port) == -1) {
-        SPDLOG_ERROR("[Network] SDLNet_ResolveHost: {}", SDLNet_GetError());
-    }
-
-    isEnabled = true;
-
     if (receiveThread.joinable()) {
         receiveThread.join();
     }
+
+    networkHost = host;
+    networkPort = port;
+    isEnabled = true;
 
     receiveThread = std::thread(&Network::ReceiveFromServer, this);
 }
@@ -62,15 +60,25 @@ void Network::SendJsonToRemote(nlohmann::json payload) {
 }
 
 void Network::ReceiveFromServer() {
+    bool loggedResolveError = false;
+
     while (isEnabled) {
         while (!isConnected && isEnabled) {
-            networkSocket = SDLNet_TCP_Open(&networkAddress);
+            // Resolved here so a slow or failed lookup never blocks the game, and is retried with the connection
+            IPaddress networkAddress;
+            if (SDLNet_ResolveHost(&networkAddress, networkHost.c_str(), networkPort) == 0) {
+                loggedResolveError = false;
+                networkSocket = SDLNet_TCP_Open(&networkAddress);
+            } else if (!loggedResolveError) {
+                loggedResolveError = true;
+                SPDLOG_ERROR("[Network] SDLNet_ResolveHost: {}", SDLNet_GetError());
+            }
 
             if (networkSocket) {
-                isConnected = true;
                 receivedData.clear();
                 SPDLOG_INFO("[Network] Connection to server established!");
                 OnConnected();
+                isConnected = true;
                 break;
             }
 

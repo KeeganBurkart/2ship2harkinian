@@ -14,7 +14,8 @@
  */
 class Network {
   private:
-    IPaddress networkAddress;
+    std::string networkHost;
+    uint16_t networkPort = 0;
     TCPsocket networkSocket = nullptr;
     std::thread receiveThread;
     std::string receivedData;
@@ -33,6 +34,7 @@ class Network {
 
     // Called on the network thread for every complete packet
     virtual void OnIncomingJson(nlohmann::json payload);
+    // Called on the network thread, just before isConnected becomes true
     virtual void OnConnected();
     virtual void OnDisconnected();
     // Called on the network thread in its loop, the only place outgoing data should be written

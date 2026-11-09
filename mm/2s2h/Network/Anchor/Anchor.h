@@ -4,6 +4,7 @@
 
 #include "2s2h/Network/Network.h"
 #include <libultraship/bridge/consolevariablebridge.h>
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <queue>
@@ -72,6 +73,10 @@ class Anchor : public Network {
     bool shouldRefreshActors = false;
     bool justLoadedSave = false;
     bool isProcessingIncomingPacket = false;
+    // Bumped by the network thread for every new connection; the game thread answers each one with a handshake
+    std::atomic<uint32_t> connectionGeneration = 0;
+    uint32_t handshakeGeneration = 0;
+    bool wasConnected = false;
     std::queue<nlohmann::json> incomingPacketQueue;
     std::mutex incomingPacketQueueMutex;
     std::queue<nlohmann::json> outgoingPacketQueue;
@@ -90,6 +95,7 @@ class Anchor : public Network {
     void HandlePacket_RequestTeamState(nlohmann::json payload);
     void HandlePacket_RequestTeleport(nlohmann::json payload);
     void HandlePacket_ServerMessage(nlohmann::json payload);
+    void HandlePacket_SharedUpgrades(nlohmann::json payload);
     void HandlePacket_SetFlag(nlohmann::json payload);
     void HandlePacket_SetSceneFlag(nlohmann::json payload);
     void HandlePacket_TeleportTo(nlohmann::json payload);
@@ -112,6 +118,7 @@ class Anchor : public Network {
     inline static const std::string REQUEST_TELEPORT = "REQUEST_TELEPORT";
     inline static const std::string SERVER_MESSAGE = "SERVER_MESSAGE";
     inline static const std::string SET_FLAG = "SET_FLAG";
+    inline static const std::string SHARED_UPGRADES = "SHARED_UPGRADES";
     inline static const std::string SET_SCENE_FLAG = "SET_SCENE_FLAG";
     inline static const std::string TELEPORT_TO = "TELEPORT_TO";
     inline static const std::string UPDATE_CLIENT_STATE = "UPDATE_CLIENT_STATE";
@@ -126,13 +133,13 @@ class Anchor : public Network {
     void Disable();
     void OnIncomingJson(nlohmann::json payload) override;
     void OnConnected() override;
-    void OnDisconnected() override;
     void ProcessOutgoingPackets() override;
     void SendJsonToRemote(nlohmann::json packet) override;
     void ProcessIncomingPacketQueue();
     void RegisterHooks();
     void RegisterEnemyHooks(bool enabled);
     void UpdateEnemyHealthScale();
+    void CheckSharedUpgrades();
     uint8_t GetPlayersInScene();
     uint8_t GetEnemyHealthScale();
     bool IsSaveLoaded();

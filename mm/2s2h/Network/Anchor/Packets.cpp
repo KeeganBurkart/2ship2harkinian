@@ -151,6 +151,8 @@ void Anchor::SendPacket_UpdateRoomState() {
     payload["type"] = UPDATE_ROOM_STATE;
     payload["state"] = PrepRoomState();
     SendJsonToRemote(payload);
+    // The server relays this to everyone else, so the owner applies it here
+    HandlePacket_UpdateRoomState(payload);
 }
 
 void Anchor::HandlePacket_UpdateRoomState(json payload) {
@@ -300,7 +302,6 @@ static bool ShouldShareItem(u8 item) {
         case ITEM_SWORD_KOKIRI:
         case ITEM_SWORD_RAZOR:
         case ITEM_SWORD_GILDED:
-        case ITEM_SWORD_DEITY:
         case ITEM_SHIELD_HERO:
         case ITEM_SHIELD_MIRROR:
         case ITEM_QUIVER_30:
@@ -323,6 +324,7 @@ static bool ShouldShareItem(u8 item) {
         case ITEM_DEKU_STICK_UPGRADE_30:
         case ITEM_DEKU_NUT_UPGRADE_30:
         case ITEM_DEKU_NUT_UPGRADE_40:
+        case ITEM_SONG_LULLABY_INTRO:
             return true;
         default:
             break;
@@ -334,13 +336,101 @@ static bool ShouldShareItem(u8 item) {
     if (item >= ITEM_SONG_SONATA && item <= ITEM_SONG_SUN) {
         return true;
     }
-    if (item >= ITEM_MAP_POINT_GREAT_BAY && item <= ITEM_MAP_POINT_ZORA_CAPE) {
-        return true;
-    }
     return false;
 }
 
+static bool IsSword(u8 item) {
+    return item >= ITEM_SWORD_KOKIRI && item <= ITEM_SWORD_GILDED;
+}
+
+// Whether a shared item would add nothing, or even downgrade what the receiver has
+static bool AlreadyHasItem(u8 item) {
+    switch (item) {
+        case ITEM_HEART_CONTAINER:
+        case ITEM_HEART_PIECE:
+        case ITEM_HEART_PIECE_2:
+        case ITEM_BOTTLE:
+            return false;
+        case ITEM_SHIELD_HERO:
+        case ITEM_SHIELD_MIRROR:
+            return GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SHIELD) >= item - ITEM_SHIELD_HERO + EQUIP_VALUE_SHIELD_HERO;
+        case ITEM_BOW:
+        case ITEM_QUIVER_30:
+            return CUR_UPG_VALUE(UPG_QUIVER) >= 1;
+        case ITEM_QUIVER_40:
+            return CUR_UPG_VALUE(UPG_QUIVER) >= 2;
+        case ITEM_QUIVER_50:
+            return CUR_UPG_VALUE(UPG_QUIVER) >= 3;
+        case ITEM_BOMB_BAG_20:
+            return CUR_UPG_VALUE(UPG_BOMB_BAG) >= 1;
+        case ITEM_BOMB_BAG_30:
+            return CUR_UPG_VALUE(UPG_BOMB_BAG) >= 2;
+        case ITEM_BOMB_BAG_40:
+            return CUR_UPG_VALUE(UPG_BOMB_BAG) >= 3;
+        case ITEM_WALLET_ADULT:
+            return CUR_UPG_VALUE(UPG_WALLET) >= 1;
+        case ITEM_WALLET_GIANT:
+            return CUR_UPG_VALUE(UPG_WALLET) >= 2;
+        case ITEM_DEKU_STICK_UPGRADE_20:
+            return CUR_UPG_VALUE(UPG_DEKU_STICKS) >= 2;
+        case ITEM_DEKU_STICK_UPGRADE_30:
+            return CUR_UPG_VALUE(UPG_DEKU_STICKS) >= 3;
+        case ITEM_DEKU_NUT_UPGRADE_30:
+            return CUR_UPG_VALUE(UPG_DEKU_NUTS) >= 2;
+        case ITEM_DEKU_NUT_UPGRADE_40:
+            return CUR_UPG_VALUE(UPG_DEKU_NUTS) >= 3;
+        case ITEM_BOMBERS_NOTEBOOK:
+            return CHECK_QUEST_ITEM(QUEST_BOMBERS_NOTEBOOK);
+        case ITEM_SONG_LULLABY_INTRO:
+            return CHECK_QUEST_ITEM(QUEST_SONG_LULLABY_INTRO);
+        default:
+            break;
+    }
+
+    if (IsSword(item)) {
+        return GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD) >= item - ITEM_SWORD_KOKIRI + EQUIP_VALUE_SWORD_KOKIRI;
+    }
+    if (item >= ITEM_SONG_SONATA && item <= ITEM_SONG_SUN) {
+        return CHECK_QUEST_ITEM(item - ITEM_SONG_SONATA + QUEST_SONG_SONATA);
+    }
+    if (item >= ITEM_REMAINS_ODOLWA && item <= ITEM_REMAINS_TWINMOLD) {
+        return CHECK_QUEST_ITEM(item - ITEM_REMAINS_ODOLWA + QUEST_REMAINS_ODOLWA);
+    }
+    return INV_CONTENT(item) == item;
+}
+
+// Item_Give puts a new sword on the current form's B button, which is wrong whenever the receiver is transformed
+static void GiveSword(u8 item) {
+    SET_EQUIP_VALUE(EQUIP_TYPE_SWORD, item - ITEM_SWORD_KOKIRI + EQUIP_VALUE_SWORD_KOKIRI);
+    if (item == ITEM_SWORD_RAZOR) {
+        gSaveContext.save.saveInfo.playerData.swordHealth = 100;
+    }
+
+    // Human Link shares his B button with Fierce Deity, whose sword is swapped back out when the mask comes off
+    u8& humanB = BUTTON_ITEM_EQUIP(0, EQUIP_SLOT_B);
+    if (humanB == ITEM_NONE || IsSword(humanB)) {
+        humanB = item;
+        if (gSaveContext.save.playerForm == PLAYER_FORM_HUMAN) {
+            Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_B);
+        }
+    }
+}
+
 void Anchor::SendPacket_GiveItem(u8 itemId) {
+    // A bottle found with something in it is still a new bottle for the team; the contents stay with the finder
+    switch (itemId) {
+        case ITEM_LONGSHOT: // Red potion with bottle
+        case ITEM_MILK_BOTTLE:
+        case ITEM_POE:
+        case ITEM_GOLD_DUST:
+        case ITEM_CHATEAU:
+        case ITEM_HYLIAN_LOACH:
+            itemId = ITEM_BOTTLE;
+            break;
+        default:
+            break;
+    }
+
     if (isProcessingIncomingPacket || !IsSyncing() || !ShouldShareItem(itemId)) {
         return;
     }
@@ -363,19 +453,14 @@ void Anchor::HandlePacket_GiveItem(json payload) {
         return;
     }
 
-    // Owned equipment, masks and songs would only be re-given, skip them quietly
-    if (Item_CheckObtainability(itemId) == ITEM_NONE && itemId != ITEM_HEART_PIECE && itemId != ITEM_HEART_PIECE_2 &&
-        itemId != ITEM_HEART_CONTAINER && itemId != ITEM_BOTTLE) {
+    if (AlreadyHasItem(itemId)) {
         return;
     }
 
-    Item_Give(gPlayState, itemId);
-
-    // Heart pieces normally become a container when their message box closes, which a remote give never shows
-    if (EQ_MAX_QUEST_HEART_PIECE_COUNT) {
-        RESET_HEART_PIECE_COUNT;
-        gSaveContext.save.saveInfo.playerData.healthCapacity += 0x10;
-        gSaveContext.save.saveInfo.playerData.health += 0x10;
+    if (IsSword(itemId)) {
+        GiveSword(itemId);
+    } else {
+        Item_Give(gPlayState, itemId);
     }
 
     std::string name = "A teammate";
@@ -520,12 +605,103 @@ void Anchor::HandlePacket_SetSceneFlag(json payload) {
     }
 }
 
+// MARK: - Shared upgrades
+
+// Great Fairy rewards and owl statues are written straight to the save, with no item or flag event to share. They are
+// spotted by watching the save instead.
+struct SharedUpgrades {
+    bool magic = false;
+    bool doubleMagic = false;
+    bool doubleDefense = false;
+    u16 owls = 0;
+};
+
+static bool sUpgradesKnown = false;
+static SharedUpgrades sKnownUpgrades;
+
+static SharedUpgrades ReadUpgrades() {
+    const auto& playerData = gSaveContext.save.saveInfo.playerData;
+    return {
+        .magic = playerData.isMagicAcquired != 0,
+        .doubleMagic = playerData.isDoubleMagicAcquired != 0,
+        .doubleDefense = playerData.doubleDefense != 0,
+        .owls = playerData.owlActivationFlags,
+    };
+}
+
+static void GrantUpgrades(const SharedUpgrades& upgrades) {
+    auto& playerData = gSaveContext.save.saveInfo.playerData;
+
+    if ((upgrades.magic && !playerData.isMagicAcquired) ||
+        (upgrades.doubleMagic && !playerData.isDoubleMagicAcquired)) {
+        playerData.isMagicAcquired = true;
+        if (upgrades.doubleMagic) {
+            playerData.isDoubleMagicAcquired = true;
+        }
+        // Level 0 makes the interface grow the meter to its new size and fill it, as it does after loading a save
+        playerData.magic = playerData.isDoubleMagicAcquired ? MAGIC_DOUBLE_METER : MAGIC_NORMAL_METER;
+        playerData.magicLevel = 0;
+    }
+
+    if (upgrades.doubleDefense && !playerData.doubleDefense) {
+        playerData.doubleDefense = true;
+        gSaveContext.save.saveInfo.inventory.defenseHearts = 20;
+    }
+
+    playerData.owlActivationFlags |= upgrades.owls;
+
+    sKnownUpgrades = ReadUpgrades();
+    sUpgradesKnown = true;
+}
+
+void Anchor::CheckSharedUpgrades() {
+    if (!IsSaveLoaded()) {
+        sUpgradesKnown = false;
+        return;
+    }
+
+    SharedUpgrades now = ReadUpgrades();
+    bool gained = sUpgradesKnown && ((now.magic && !sKnownUpgrades.magic) ||
+                                     (now.doubleMagic && !sKnownUpgrades.doubleMagic) ||
+                                     (now.doubleDefense && !sKnownUpgrades.doubleDefense) ||
+                                     (now.owls & ~sKnownUpgrades.owls) != 0);
+    sKnownUpgrades = now;
+    sUpgradesKnown = true;
+
+    if (!gained || !IsSyncing()) {
+        return;
+    }
+
+    json payload;
+    payload["type"] = SHARED_UPGRADES;
+    payload["targetTeamId"] = GetTeamId();
+    payload["addToQueue"] = true;
+    payload["magic"] = now.magic;
+    payload["doubleMagic"] = now.doubleMagic;
+    payload["doubleDefense"] = now.doubleDefense;
+    payload["owls"] = now.owls;
+    SendJsonToRemote(payload);
+}
+
+void Anchor::HandlePacket_SharedUpgrades(json payload) {
+    if (!IsSyncing()) {
+        return;
+    }
+
+    GrantUpgrades({
+        .magic = payload.value("magic", false),
+        .doubleMagic = payload.value("doubleMagic", false),
+        .doubleDefense = payload.value("doubleDefense", false),
+        .owls = payload.value("owls", (u16)0),
+    });
+}
+
 // MARK: - Team state
 
 /**
  * The team state is the shared progress a teammate needs when they join later: owned items, upgrades, quest status,
- * health and magic, owl statues, and the weekEventReg and scene flags that persist across the Song of Time. Applying
- * it only ever adds progress, so a teammate who is ahead never loses anything.
+ * sword and shield, health and magic, owl statues, and the weekEventReg and scene flags that persist across the Song
+ * of Time. Applying it only ever adds progress, so a teammate who is ahead never loses anything.
  */
 json Anchor::PrepTeamState() {
     SaveInfo& saveInfo = gSaveContext.save.saveInfo;
@@ -535,8 +711,9 @@ json Anchor::PrepTeamState() {
 
     json state;
     state["inventory"] = saveInfo.inventory;
+    state["sword"] = GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD);
+    state["shield"] = GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SHIELD);
     state["healthCapacity"] = saveInfo.playerData.healthCapacity;
-    state["magicLevel"] = saveInfo.playerData.magicLevel;
     state["isMagicAcquired"] = saveInfo.playerData.isMagicAcquired;
     state["isDoubleMagicAcquired"] = saveInfo.playerData.isDoubleMagicAcquired;
     state["doubleDefense"] = saveInfo.playerData.doubleDefense;
@@ -614,18 +791,23 @@ void Anchor::ApplyTeamState(const json& state) {
         inventory.questItems |= myPieces;
     }
 
-    if (state.value("isMagicAcquired", (u8)0)) {
-        saveInfo.playerData.isMagicAcquired = true;
+    // The sword and shield are equipment levels rather than inventory items; take the better of each
+    u8 sword = state.value("sword", (u8)0);
+    if (sword > GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD) && sword <= EQUIP_VALUE_SWORD_KOKIRI + 2) {
+        GiveSword(ITEM_SWORD_KOKIRI + sword - EQUIP_VALUE_SWORD_KOKIRI);
     }
-    if (state.value("isDoubleMagicAcquired", (u8)0)) {
-        saveInfo.playerData.isDoubleMagicAcquired = true;
+    u8 shield = state.value("shield", (u8)0);
+    if (shield > GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SHIELD) && shield <= EQUIP_VALUE_SHIELD_HERO + 1) {
+        SET_EQUIP_VALUE(EQUIP_TYPE_SHIELD, shield);
+        Player_SetEquipmentData(gPlayState, GET_PLAYER(gPlayState));
     }
-    saveInfo.playerData.magicLevel = std::max(saveInfo.playerData.magicLevel, state.value("magicLevel", (s8)0));
-    if (state.value("doubleDefense", (u8)0)) {
-        saveInfo.playerData.doubleDefense = true;
-        inventory.defenseHearts = 20;
-    }
-    saveInfo.playerData.owlActivationFlags |= state.value("owlActivationFlags", (u16)0);
+
+    GrantUpgrades({
+        .magic = state.value("isMagicAcquired", (u8)0) != 0,
+        .doubleMagic = state.value("isDoubleMagicAcquired", (u8)0) != 0,
+        .doubleDefense = state.value("doubleDefense", (u8)0) != 0,
+        .owls = state.value("owlActivationFlags", (u16)0),
+    });
 
     std::vector<u8> weekEventReg = state.value("weekEventReg", std::vector<u8>{});
     for (size_t i = 0; i < weekEventReg.size() && i < ARRAY_COUNT(saveInfo.weekEventReg); i++) {

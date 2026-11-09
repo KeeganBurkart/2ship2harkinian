@@ -36,18 +36,20 @@ void Anchor::Enable() {
 
 void Anchor::Disable() {
     Network::Disable();
+    wasConnected = false;
     clients.clear();
     RefreshClientActors();
+    UpdateEnemyHealthScale();
     RegisterHooks();
 }
 
+// Runs on the network thread, so it only flags the new connection for the game thread to pick up
 void Anchor::OnConnected() {
-    SendPacket_Handshake();
-    justLoadedSave = IsSaveLoaded();
-}
-
-void Anchor::OnDisconnected() {
-    Notification::Emit({ .prefix = "Anchor:", .message = "Disconnected" });
+    {
+        std::lock_guard<std::mutex> lock(outgoingPacketQueueMutex);
+        outgoingPacketQueue = {};
+    }
+    connectionGeneration++;
 }
 
 std::string Anchor::GetTeamId() {
@@ -69,13 +71,12 @@ void Anchor::SendJsonToRemote(nlohmann::json payload) {
         return;
     }
 
-    payload["clientId"] = ownClientId;
-
-    if (payload["type"] == HANDSHAKE) {
-        // Sent from the network thread right after connecting
-        Network::SendJsonToRemote(payload);
+    // Nothing may go out on a new connection ahead of its handshake
+    if (payload["type"] != HANDSHAKE && handshakeGeneration != connectionGeneration) {
         return;
     }
+
+    payload["clientId"] = ownClientId;
 
     std::lock_guard<std::mutex> lock(outgoingPacketQueueMutex);
     outgoingPacketQueue.push(payload);
@@ -94,22 +95,8 @@ void Anchor::ProcessOutgoingPackets() {
     }
 }
 
+// Runs on the network thread; packets are only looked at once the game thread drains the queue
 void Anchor::OnIncomingJson(nlohmann::json payload) {
-    if (!payload.contains("type")) {
-        return;
-    }
-
-    std::string packetType = payload["type"].get<std::string>();
-
-    // Gameplay packets from a different build could corrupt the save, so only accept them from matching versions
-    if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE && payload.contains("clientId")) {
-        uint32_t clientId = payload["clientId"].get<uint32_t>();
-        auto it = clients.find(clientId);
-        if (it != clients.end() && it->second.clientVersion != clientVersion) {
-            return;
-        }
-    }
-
     std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
     incomingPacketQueue.push(payload);
 }
@@ -125,10 +112,21 @@ void Anchor::ProcessIncomingPacketQueue() {
         nlohmann::json payload = packetsToProcess.front();
         packetsToProcess.pop();
 
-        std::string packetType = payload["type"].get<std::string>();
+        std::string packetType = payload.value("type", "");
         isProcessingIncomingPacket = true;
 
         try {
+            // Gameplay packets from a different build could corrupt the save, so only accept them from matching
+            // versions. Players on another build are still shown, they just don't share anything.
+            if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE && packetType != PLAYER_UPDATE &&
+                payload.contains("clientId")) {
+                auto it = clients.find(payload["clientId"].get<uint32_t>());
+                if (it != clients.end() && it->second.clientVersion != clientVersion) {
+                    isProcessingIncomingPacket = false;
+                    continue;
+                }
+            }
+
             if (packetType == ALL_CLIENT_STATE)
                 HandlePacket_AllClientState(payload);
             else if (packetType == ENEMY_HEALTH)
@@ -149,6 +147,8 @@ void Anchor::ProcessIncomingPacketQueue() {
                 HandlePacket_SetFlag(payload);
             else if (packetType == SET_SCENE_FLAG)
                 HandlePacket_SetSceneFlag(payload);
+            else if (packetType == SHARED_UPGRADES)
+                HandlePacket_SharedUpgrades(payload);
             else if (packetType == TELEPORT_TO)
                 HandlePacket_TeleportTo(payload);
             else if (packetType == UPDATE_CLIENT_STATE)
@@ -225,15 +225,38 @@ void Anchor::RegisterHooks() {
 
     COND_HOOK(OnGameStateMainStart, enabled, []() {
         Anchor* anchor = Anchor::Instance;
+        bool saveLoaded = anchor->IsSaveLoaded();
+        s16 sceneId = saveLoaded ? gPlayState->sceneId : -1;
+
+        bool connected = anchor->isConnected;
+        uint32_t generation = anchor->connectionGeneration;
+        if (connected && anchor->handshakeGeneration != generation) {
+            // The handshake carries the current scene, so there is nothing else to report yet
+            anchor->handshakeGeneration = generation;
+            anchor->wasConnected = true;
+            anchor->SendPacket_Handshake();
+            anchor->justLoadedSave = saveLoaded;
+            sLastSaveLoaded = saveLoaded;
+            sLastSceneId = sceneId;
+        } else if (!connected && anchor->wasConnected) {
+            anchor->wasConnected = false;
+            for (auto& [clientId, client] : anchor->clients) {
+                if (!client.self) {
+                    client.online = false;
+                }
+            }
+            anchor->RefreshClientActors();
+            Notification::Emit({ .prefix = "Anchor:", .message = "Disconnected" });
+        }
+
+        // Before the incoming packets, so an upgrade a teammate sends can't hide one earned here last frame
+        anchor->CheckSharedUpgrades();
         anchor->ProcessIncomingPacketQueue();
         anchor->UpdateEnemyHealthScale();
 
         if (!anchor->isConnected) {
             return;
         }
-
-        bool saveLoaded = anchor->IsSaveLoaded();
-        s16 sceneId = saveLoaded ? gPlayState->sceneId : -1;
 
         if (saveLoaded != sLastSaveLoaded || sceneId != sLastSceneId) {
             if (saveLoaded && !sLastSaveLoaded) {
