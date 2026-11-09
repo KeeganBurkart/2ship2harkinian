@@ -957,6 +957,42 @@ void BenMenu::AddEnhancements() {
                      .IsPercentage()
                      .Min(0.01f)
                      .Max(5.0f));
+    AddWidget(path, "Mouse", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Mouse Camera", WIDGET_CVAR_CHECKBOX)
+        .CVar("gSettings.EnableMouse")
+        .Callback([](WidgetInfo& info) {
+            std::shared_ptr<Ship::Window> window = Ship::Context::GetRawInstance()->GetWindow();
+            window->SetAutoCaptureMouse(CVarGetInteger("gSettings.EnableMouse", 0) &&
+                                        CVarGetInteger("gSettings.AutoCaptureMouse", 1));
+            window->GetMouseStateManager()->UpdateMouseCapture();
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Look around with the mouse: moves the Free Look camera and aims in first person.\n\n"
+            "The mouse is captured while the menu is closed. Press F2 to release or recapture it."));
+    AddWidget(path, "Mouse Horizontal Sensitivity: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Camera.Mouse.SensitivityX")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = !CVarGetInteger("gSettings.EnableMouse", 0); })
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjusts how far the camera turns per mouse movement.")
+                     .Format("%.0f%%")
+                     .DefaultValue(1.0f)
+                     .IsPercentage()
+                     .Min(0.1f)
+                     .Max(5.0f));
+    AddWidget(path, "Mouse Vertical Sensitivity: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Camera.Mouse.SensitivityY")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = !CVarGetInteger("gSettings.EnableMouse", 0); })
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjusts how far the camera tilts per mouse movement.")
+                     .Format("%.0f%%")
+                     .DefaultValue(1.0f)
+                     .IsPercentage()
+                     .Min(0.1f)
+                     .Max(5.0f));
+    AddWidget(path, "Invert Mouse Y Axis", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.Mouse.InvertY")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = !CVarGetInteger("gSettings.EnableMouse", 0); })
+        .Options(CheckboxOptions().Tooltip("Moving the mouse up looks down."));
     AddWidget(path, "Enable Roll (6\xC2\xB0 of Freedom)", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.DebugCam.6DOF")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_DEBUG_CAM_OFF).active; })

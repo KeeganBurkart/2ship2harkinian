@@ -48,6 +48,7 @@
 #include "2s2h/BenPort.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/CustomMessage/CustomMessage.h"
+#include "2s2h/Enhancements/Camera/MouseCamera.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 
 void Player_Init(Actor* thisx, PlayState* play);
@@ -13553,28 +13554,33 @@ s32 Ship_HandleFirstPersonAiming(PlayState* play, Player* this, s32 arg2) {
         stickY += rightStickY * CVarGetFloat("gEnhancements.Camera.FirstPerson.RightStickSensitivityY", 1.0f);
     }
 
+    // Mouse right turns right, mouse up looks up (positive rot.x looks down)
+    float mouseX = -MouseCamera_GetDeltaX() * 20.0f * CVarGetFloat("gEnhancements.Camera.Mouse.SensitivityX", 1.0f);
+    float mouseY = MouseCamera_GetDeltaY() * 20.0f * CVarGetFloat("gEnhancements.Camera.Mouse.SensitivityY", 1.0f) *
+                   (CVarGetInteger("gEnhancements.Camera.Mouse.InvertY", 0) ? -1.0f : 1.0f);
+
     stickX = CLAMP(stickX, -60, 60);
     stickY = CLAMP(stickY, -60, 60);
 
     if (!func_800B7128(this) && !func_8082EF20(this) && !arg2) { // First person without weapon
         var_s0 = stickY * 0xF0;
         if (CVarGetInteger("gEnhancements.Camera.FirstPerson.DisableFirstPersonAutoCenterView", 0) ||
-            CVarGetInteger("gEnhancements.Camera.FirstPerson.GyroEnabled", 0)) {
+            CVarGetInteger("gEnhancements.Camera.FirstPerson.GyroEnabled", 0) || MouseCamera_IsActive()) {
             this->actor.focus.rot.x += var_s0 * 0.1f;
         } else {
             Math_SmoothStepToS(&this->actor.focus.rot.x, var_s0, 0xE, 0xFA0, 0x1E);
         }
-        this->actor.focus.rot.x += gyroY;
+        this->actor.focus.rot.x += gyroY + mouseY;
         this->actor.focus.rot.x = CLAMP(this->actor.focus.rot.x, -14000, 14000);
 
         var_s0 = stickX * -0x10;
         var_s0 = CLAMP(var_s0, -0xBB8, 0xBB8);
-        this->actor.focus.rot.y += var_s0 + gyroX;
+        this->actor.focus.rot.y += var_s0 + gyroX + mouseX;
     } else { // First person with weapon
         s16 temp3;
 
         temp3 = ((stickY >= 0) ? 1 : -1) * (s32)((1.0f - Math_CosS(stickY * 0xC8)) * 1500.0f);
-        this->actor.focus.rot.x += temp3 + gyroY;
+        this->actor.focus.rot.x += temp3 + gyroY + mouseY;
 
         if (this->stateFlags1 & PLAYER_STATE1_800000) {
             this->actor.focus.rot.x = CLAMP(this->actor.focus.rot.x, -0x1F40, 0xFA0);
@@ -13586,7 +13592,7 @@ s32 Ship_HandleFirstPersonAiming(PlayState* play, Player* this, s32 arg2) {
         temp3 = ((stickX >= 0) ? 1 : -1) * (s32)((1.0f - Math_CosS(stickX * 0xC8)) * -1500.0f);
         var_s0 += temp3;
 
-        this->actor.focus.rot.y = CLAMP(var_s0 + gyroX, -0x4AAA, 0x4AAA) + this->actor.shape.rot.y;
+        this->actor.focus.rot.y = CLAMP(var_s0 + gyroX + mouseX, -0x4AAA, 0x4AAA) + this->actor.shape.rot.y;
     }
 
     bool playerMovementLocked = (this->actionFunc == Player_Action_52) || // Riding on Epona
